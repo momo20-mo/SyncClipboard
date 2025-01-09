@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync Clipboard</title>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            margin-bottom: 20px;
+        }
+        #textInput {
+            padding: 10px;
+            border-radius: 20px;
+            font-size: 16px;
+            width: 300px;
+            margin-bottom: 20px;
+            box-sizing: border-box;
+        }
+.button-container {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);  /* 两列布局 */
+    gap: 10px;  /* 按钮之间的间距 */
+    justify-items: center;  /* 横向居中对齐 */
+    align-items: center;  /* 纵向居中对齐 */
+    text-align: center;  /* 使按钮文本居中 */
+}
+
+button {
+    padding: 10px;
+    font-size: 16px;
+    cursor: pointer;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    width: 135px;  /* 按钮宽度充满网格单元格 */
+    margin-bottom: 10px;
+}
+        .drop-area {
+            border: 2px dashed #4CAF50;
+            border-radius: 20px;
+            width: 300px;
+            height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #4CAF50;
+            transition: border-color 0.3s;
+            margin-bottom: 20px;
+        }
+        .drop-area.dragover {
+            border-color: #000;
+        }
+        progress {
+            width: 100%;
+            margin-top: 20px;
+            display: none;
+        }
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Sync Clipboard</h1>
+
+    <input type="text" id="textInput" placeholder="输入文本" />
+
+    <div class="button-container">
+    <button id="uploadTextBtn">上传文本</button>
+    <button id="pasteBtn">粘贴</button>
+    <button id="uploadBtn">上传文件</button>
+    <button id="downloadClipboardBtn">下载剪切板</button>
+    <button id="tempBtn">temp</button>
+    </div>
+
+    <div class="drop-area" id="dropArea">拖拽文件到这里</div>
+
+    <progress id="progressBar" value="0" max="100"></progress>
+    <div class="toast" id="toast"></div>
+
+    <input type="file" id="fileInput" style="display: none;" />
+
+    <script>
+        // 检查是否存储了用户名和密码
+        function checkAuth() {
+            const storedUsername = localStorage.getItem('username');
+            const storedPassword = localStorage.getItem('password');
+
+            if (!storedUsername || !storedPassword) {
+                // 打开 token.html 进行认证
+                const authWindow = window.open('token.html', 'AuthWindow', 'width=400,height=400');
+
+                // 监听认证完成
+                window.addEventListener('message', (event) => {
+                    if (event.data === 'authenticated') {
+                        authWindow.close();
+                        showToast('认证成功');
+                    }
+                }, { once: true });
+            }
+        }
+
+        checkAuth();
+
+        const syncClipboard = {
+            Clipboard: ""
+        };
+
+        // 显示 Toast 消息
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.style.display = 'block';
+            setTimeout(() => {
+                toast.style.display = 'none';
+            }, 3000); // 3秒后自动隐藏
+        }
+
+      // 上传文本按钮点击事件
+    document.getElementById('uploadTextBtn').addEventListener('click', async () => {
+        const textContent = document.getElementById('textInput').value;
+        if (!textContent) {
+            showToast('请输入文本');
+            return;
+        }
+
+        syncClipboard.File = "";  // 指定文件名
+        syncClipboard.Clipboard = textContent;
+        syncClipboard.Type = "Text";
+        showToast('上传文本: ' + textContent);
+        await saveSyncClipboardJson();  // 更新 SyncClipboard.json
+    });
+
+
+       
+    // 粘贴按钮点击事件
+    document.getElementById('pasteBtn').addEventListener('click', async () => {
+        try {
+            const clipboardItems = await navigator.clipboard.read();
+            for (const item of clipboardItems) {
+                if (item.types.includes('text/plain')) {
+                    const text = await item.getType('text/plain');
+                    const textContent = await text.text();
+                    syncClipboard.File = "";
+                    syncClipboard.Type = "Text";
+                    syncClipboard.Clipboard = textContent;
+                    showToast('已获取文本数据: ' + textContent);
+                    await saveSyncClipboardJson();  // 更新 SyncClipboard.json
+                } else if (item.types.some(type => type.startsWith('image/'))) {
+                    const fileType = item.types.find(type => type.startsWith('image/'));
+                    const blob = await item.getType(fileType);
+                    const fileName = 'image.' + fileType.split('/')[1];  // 自动生成文件名
+                    syncClipboard.File = fileName;
+                    syncClipboard.Clipboard = "";
+                    syncClipboard.Type = "Image";
+
+                    showToast('已获取图片: ' + fileName);
+                    await uploadFile(blob, fileName);  // 上传文件
+                    await saveSyncClipboardJson();  // 更新 SyncClipboard.json
+                }
+            }
+        } catch (err) {
+            console.error('粘贴失败:', err);
+        }
+    });
+
+
+        // 上传按钮点击事件
+        document.getElementById('uploadBtn').addEventListener('click', () => {
+            document.getElementById('fileInput').click();  // 打开文件选择窗口
+        });
+
+        // 下载剪切板按钮点击事件
+        document.getElementById('downloadClipboardBtn').addEventListener('click', () => {
+            window.open('Download.html', '_blank'); // 打开 /Download.html
+        });
+        // temp按钮点击事件
+        document.getElementById('tempBtn').addEventListener('click', () => {
+            window.open('temp', '_blank'); // 打开 /Download.html
+        });
+
+        
+    // 监听文件选择
+    document.getElementById('fileInput').addEventListener('change', async (event) => {
+        const file = event.target.files[0];
+        if (!file) {
+            showToast('没有选择文件');
+            return;
+        }
+
+        syncClipboard.File = file.name;
+        syncClipboard.Clipboard = "";
+        syncClipboard.Type = "Image";
+
+        await uploadFile(file, file.name);  // 上传文件
+        await saveSyncClipboardJson();  // 更新 SyncClipboard.json
+    });
+
+        // 设置拖拽区域事件
+        const dropArea = document.getElementById('dropArea');
+
+        // 拖拽文件进入区域时
+        dropArea.addEventListener('dragover', (event) => {
+            event.preventDefault(); // 防止默认行为以允许放置
+            dropArea.classList.add('dragover');
+        });
+
+        // 拖拽文件离开区域时
+        dropArea.addEventListener('dragleave', () => {
+            dropArea.classList.remove('dragover');
+        });
+
+            // 文件放置事件
+    dropArea.addEventListener('drop', async (event) => {
+        event.preventDefault(); // 防止默认行为
+
+        const files = event.dataTransfer.files; // 获取拖拽的文件
+        if (files.length === 0) {
+            showToast('没有选择文件');
+            return;
+        }
+
+        const file = files[0];
+        syncClipboard.File = file.name;
+        syncClipboard.Clipboard = "";
+        syncClipboard.Type = "Image";
+
+        await uploadFile(file, file.name); // 上传文件
+        await saveSyncClipboardJson(); // 更新 SyncClipboard.json
+
+        dropArea.style.borderColor = '#4CAF50'; // 还原边框颜色
+    });
+
+        // 上传文件到 WebDAV
+        async function uploadFile(file, fileName) {
+            const username = localStorage.getItem('username');
+            const password = localStorage.getItem('password');
+
+            if (!username || !password) {
+                showToast('未找到认证信息');
+                checkAuth();
+                return;
+            }
+
+            const fileUrl = `/dav/file/${encodeURIComponent(fileName)}`;
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.display = 'block';  // 显示进度条
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('PUT', fileUrl, true);
+            xhr.setRequestHeader('Authorization', 'Basic ' + btoa(username + ':' + password));
+
+            // 监听上传进度事件
+            xhr.upload.onprogress = (event) => {
+                if (event.lengthComputable) {
+                    const percentComplete = (event.loaded / event.total) * 100;
+                    progressBar.value = percentComplete;
+                }
+            };
+
+            xhr.onload = () => {
+                progressBar.style.display = 'none'; // 隐藏进度条
+                if (xhr.status === 200 || xhr.status === 201) {
+                    showToast('文件上传成功');
+                } else {
+                    showToast('文件上传失败');
+                }
+            };
+
+            xhr.onerror = () => {
+                progressBar.style.display = 'none'; // 隐藏进度条
+                showToast('上传时发生错误');
+            };
+
+            xhr.send(file); // 直接发送文件
+        }
+
+        // 将 SyncClipboard.json 保存到指定路径
+        async function saveSyncClipboardJson() {
+            const username = localStorage.getItem('username');
+            const password = localStorage.getItem('password');
+
+            if (!username || !password) {
+                showToast('未找到认证信息');
+                checkAuth();
+                return;
+            }
+
+            const jsonUrl = '/dav/SyncClipboard.json';
+
+            try {
+                const response = await fetch(jsonUrl, {
+                    method: 'PUT',  // 使用 PUT 方法更新文件
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Basic ' + btoa(username + ':' + password)
+                    },
+                    body: JSON.stringify(syncClipboard)
+                });
+
+                if (response.ok) {
+                    console.log('SyncClipboard.json 已保存');
+                } else {
+                    console.error('保存 SyncClipboard.json 失败');
+                    showToast('保存剪切板失败');
+                }
+            } catch (error) {
+                console.error('请求出错:', error);
+                showToast('保存剪切板时发生错误');
+            }
+        }
+
+        // 监听存储变化（如 token.html 更新了认证信息）
+        window.addEventListener('storage', (event) => {
+            if (event.key === 'username' || event.key === 'password') {
+                showToast('认证信息已更新');
+            }
+        });
+    </script>
+
+</body>
+</html>

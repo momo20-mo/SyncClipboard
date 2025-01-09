@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync Clipboard</title>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        #toast {
+            visibility: hidden;
+            min-width: 250px;
+            margin-left: -125px;
+            background-color: #333;
+            color: white;
+            text-align: center;
+            border-radius: 5px;
+            padding: 16px;
+            position: fixed;
+            z-index: 1;
+            left: 50%;
+            bottom: 30px;
+            font-size: 17px;
+            transition: visibility 0s, opacity 0.5s linear;
+            opacity: 0;
+        }
+        #toast.show {
+            visibility: visible;
+            opacity: 1;
+            animation: fadein 0.5s, fadeout 0.5s 2.5s;
+        }
+        @keyframes fadein {
+            from {bottom: 0; opacity: 0;} 
+            to {bottom: 30px; opacity: 1;}
+        }
+        @keyframes fadeout {
+            from {bottom: 30px; opacity: 1;} 
+            to {bottom: 0; opacity: 0;}
+        }
+        #clipboardContent {
+            margin-top: 20px;
+            font-size: 18px;
+            word-wrap: break-word;
+            max-width: 80%;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="toast"></div>
+    <div id="clipboardContent"></div>
+    <script>
+        // 显示 Toast 提示
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.className = 'show';
+            setTimeout(() => { 
+                toast.className = toast.className.replace('show', ''); 
+            }, 3000); // 3秒后自动隐藏
+        }
+
+        async function syncClipboard() {
+            // 检查是否存储了用户名和密码
+            const storedUsername = localStorage.getItem('username');
+            const storedPassword = localStorage.getItem('password');
+
+            if (!storedUsername || !storedPassword) {
+                // 打开 token.html 进行认证
+                const authWindow = window.open('token.html', 'AuthWindow', 'width=400,height=400');
+
+                // 监听认证完成
+                window.addEventListener('message', (event) => {
+                    if (event.data === 'authenticated') {
+                        authWindow.close();
+                        showToast('认证成功');
+                    }
+                }, { once: true });
+            }
+
+            try {
+                // 获取 JSON 数据，带上基本认证
+                const response = await fetch('/dav/SyncClipboard.json', {
+                    headers: {
+                        'Authorization': 'Basic ' + btoa(storedUsername + ':' + storedPassword)
+                    }
+                });
+
+                if (response.status === 401) {
+                    // 未授权，跳转到认证页面
+                    showToast('认证信息无效，请重新登录');
+                    setTimeout(() => {
+                        const authWindow = window.open('token.html', 'AuthWindow', 'width=400,height=400');
+
+                // 监听认证完成
+                window.addEventListener('message', (event) => {
+                    if (event.data === 'authenticated') {
+                        authWindow.close();
+                        showToast('认证成功');
+ window.location.reload();  // 刷新当前页面
+                    }
+                }, { once: true });
+
+                    }, 3000);
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('HTTP error! status: ' + response.status);
+                }
+
+                const data = await response.json();
+
+                const { File, Clipboard } = data;
+                document.getElementById('clipboardContent').innerText = Clipboard || '';
+
+                if (File) {
+                    const fileUrl = `/file/${encodeURIComponent(File)}`;
+                    window.location.href = fileUrl;  // 直接下载文件
+                    showToast('正在打开: ' + File);
+                } else if (Clipboard) {
+                    // 复制文本到剪贴板
+                    await navigator.clipboard.writeText(Clipboard);
+                    showToast('文本已复制到剪贴板: ' + Clipboard);
+                }
+            } catch (error) {
+                console.error('同步剪贴板时出错:', error);
+                showToast('同步剪贴板失败');
+            }
+        }
+
+        // 自动执行
+        window.onload = syncClipboard;
+    </script>
+</body>
+</html>
